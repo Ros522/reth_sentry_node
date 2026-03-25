@@ -1,0 +1,19 @@
+# Reth Sentry Node Configuration
+
+[network]
+# Ethereum chain ID (1 = mainnet, 11155111 = sepolia)
+chain_id = 1
+# Maximum number of P2P peers
+max_peers = 50
+# P2P TCP listen port
+p2p_port = 30303
+# Discovery UDP port
+discovery_port = 30303
+
+[backend]
+# Backend node RPC endpoints to forward validated transactions to
+endpoints = ["http://localhost:8545"]
+# Maximum concurrent forwarding requests
+max_concurrent = 64
+# Buffer size for pending transaction forwards
+buffer_size = 4096
