@@ -111,6 +111,21 @@ impl BlockCache {
             .copied()
     }
 
+    /// Get the latest (highest block number) cached block's header and hash.
+    pub fn latest(&self) -> Option<(B256, Header)> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .hash_by_number
+            .iter()
+            .max_by_key(|(&num, _)| num)
+            .and_then(|(&num, &hash)| {
+                inner
+                    .headers_by_number
+                    .peek(&num)
+                    .map(|h| (hash, h.clone()))
+            })
+    }
+
     /// Save the cache to a file.
     ///
     /// Format: [count: u32] [block_entry]*

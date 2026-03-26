@@ -16,6 +16,7 @@ reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", tag =
 reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
+reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
 
 # Alloy (versions matched to reth v1.11.3)
 alloy-primitives = "1.5"
