@@ -15,7 +15,7 @@ use crate::eth_proxy;
 use crate::forwarder::{ForwardableTx, TxForwarder};
 use reth_chainspec::MAINNET;
 use reth_eth_wire::EthNetworkPrimitives;
-use reth_network::{NetworkConfigBuilder, NetworkManager};
+use reth_network::{config::SecretKey, NetworkConfigBuilder, NetworkManager};
 use reth_network_api::{
     events::PeerEvent, NetworkEvent, NetworkEventListenerProvider, PeersInfo,
 };
@@ -65,6 +65,7 @@ pub type SentryTxPool =
 pub async fn start_sentry_network(
     net_config: SentryNetworkConfig,
     forwarder: Arc<TxForwarder>,
+    secret_key: SecretKey,
 ) -> eyre::Result<()> {
     info!("starting sentry node on port {}", net_config.p2p_port);
 
@@ -95,7 +96,7 @@ pub async fn start_sentry_network(
         .with_max_outbound(net_config.max_peers as usize / 2)
         .with_max_inbound_opt(Some(net_config.max_peers as usize / 2));
 
-    let net_builder = NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key()
+    let net_builder = NetworkConfigBuilder::<EthNetworkPrimitives>::new(secret_key)
         .listener_port(net_config.p2p_port)
         .discovery_port(net_config.discovery_port)
         .peer_config(peers_config)

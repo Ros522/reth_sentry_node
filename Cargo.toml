@@ -26,6 +26,9 @@ alloy-eips = "1.6"
 # Reth network P2P types
 reth-network-p2p = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
 
+# Crypto
+secp256k1 = { version = "0.30", features = ["global-context"] }
+
 # Async
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"

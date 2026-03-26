@@ -14,6 +14,7 @@ mod dedup;
 mod eth_proxy;
 mod forwarder;
 mod network;
+mod node_key;
 mod validator;
 mod ws_server;
 
@@ -21,7 +22,7 @@ use clap::Parser;
 use config::SentryConfig;
 use forwarder::{BackendConfig, TxForwarder};
 use network::SentryNetworkConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -57,6 +58,10 @@ struct Cli {
     /// Disable WebSocket server.
     #[arg(long, default_value_t = false)]
     no_ws: bool,
+
+    /// Data directory for persisting node key.
+    #[arg(long, default_value = "data")]
+    data_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -123,6 +128,10 @@ async fn main() -> eyre::Result<()> {
         None
     };
 
+    // Load or generate persistent node key
+    let key_path = cli.data_dir.join("node.key");
+    let secret_key = node_key::load_or_generate(Path::new(&key_path))?;
+
     // Create the transaction forwarder (HTTP + WS)
     let forwarder = Arc::new(TxForwarder::new(sentry_config.backend, ws_broadcaster));
 
@@ -130,7 +139,7 @@ async fn main() -> eyre::Result<()> {
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
     // Start the sentry network (blocks until shutdown)
-    network::start_sentry_network(net_config, forwarder).await?;
+    network::start_sentry_network(net_config, forwarder, secret_key).await?;
 
     Ok(())
 }
