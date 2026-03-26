@@ -152,7 +152,7 @@ async fn main() -> eyre::Result<()> {
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
     // Start the sentry network (runs until shutdown)
-    network::start_sentry_network(net_config, forwarder, secret_key, shutdown).await?;
+    network::start_sentry_network(net_config, forwarder, secret_key, shutdown, cli.data_dir).await?;
 
     info!("sentry node shut down cleanly");
     Ok(())
