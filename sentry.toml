@@ -12,8 +12,25 @@ discovery_port = 30303
 
 [backend]
 # Backend node RPC endpoints to forward validated transactions to
-endpoints = ["http://localhost:8545"]
+# (via eth_sendRawTransaction). Leave empty if using WebSocket only.
+endpoints = []
 # Maximum concurrent forwarding requests
 max_concurrent = 64
 # Buffer size for pending transaction forwards
 buffer_size = 4096
+
+[backend.dedup]
+# LRU cache size for tx hash deduplication
+cache_size = 100000
+# Log dedup statistics every N transactions
+log_interval = 1000
+
+[websocket]
+# Enable WebSocket server for pending tx streaming
+enabled = true
+# Bind address
+addr = "0.0.0.0"
+# WebSocket listen port
+port = 8546
+# Broadcast channel capacity
+capacity = 4096

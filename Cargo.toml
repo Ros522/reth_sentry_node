@@ -21,10 +21,18 @@ reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", ta
 alloy-primitives = "1.5"
 alloy-rlp = "0.3.13"
 alloy-consensus = "1.6"
+alloy-eips = "1.6"
+
+# Reth network P2P types
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
+
+# Crypto
+secp256k1 = { version = "0.30", features = ["global-context"] }
 
 # Async
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = "0.7"
 futures = "0.3"
 
 # Serialization / Config
@@ -41,6 +49,13 @@ clap = { version = "4", features = ["derive"] }
 
 # HTTP client for forwarding
 reqwest = { version = "0.12", features = ["json"] }
+
+# WebSocket server for pending tx streaming
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+
+# LRU cache for dedup
+lru = "0.12"
 
 # Misc
 eyre = "0.6"

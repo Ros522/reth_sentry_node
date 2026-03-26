@@ -2,6 +2,7 @@
 
 use crate::forwarder::BackendConfig;
 use crate::network::SentryNetworkConfig;
+use crate::ws_server::WsConfig;
 use serde::{Deserialize, Serialize};
 
 /// Top-level configuration.
@@ -13,6 +14,9 @@ pub struct SentryConfig {
     /// Backend forwarding configuration.
     #[serde(default)]
     pub backend: BackendConfig,
+    /// WebSocket server configuration.
+    #[serde(default)]
+    pub websocket: WsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +61,7 @@ impl Default for SentryConfig {
         Self {
             network: NetworkConfigFile::default(),
             backend: BackendConfig::default(),
+            websocket: WsConfig::default(),
         }
     }
 }

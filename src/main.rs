@@ -2,21 +2,29 @@
 //!
 //! Connects to the Ethereum P2P network to collect mempool transactions,
 //! performs stateless validation, and forwards valid transactions to
-//! configured backend nodes.
+//! configured backend nodes via HTTP RPC and/or WebSocket streaming.
 //!
-//! This node does NOT sync blocks - it only participates in transaction gossip.
+//! This node does NOT sync blocks - it caches NewBlock announcements from
+//! peers to serve block requests and maintain peer reputation.
 
+mod block_cache;
+mod block_import;
 mod config;
+mod dedup;
+mod eth_proxy;
 mod forwarder;
 mod network;
+mod node_key;
 mod validator;
+mod ws_server;
 
 use clap::Parser;
 use config::SentryConfig;
 use forwarder::{BackendConfig, TxForwarder};
 use network::SentryNetworkConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -43,6 +51,18 @@ struct Cli {
     /// Backend RPC endpoints to forward transactions to (comma-separated).
     #[arg(long, value_delimiter = ',')]
     backends: Vec<String>,
+
+    /// WebSocket server port for pending tx streaming.
+    #[arg(long, default_value_t = 8546)]
+    ws_port: u16,
+
+    /// Disable WebSocket server.
+    #[arg(long, default_value_t = false)]
+    no_ws: bool,
+
+    /// Data directory for persisting node key.
+    #[arg(long, default_value = "data")]
+    data_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -71,12 +91,20 @@ async fn main() -> eyre::Result<()> {
                 ..Default::default()
             },
             backend: if cli.backends.is_empty() {
-                BackendConfig::default()
+                BackendConfig {
+                    endpoints: vec![],
+                    ..Default::default()
+                }
             } else {
                 BackendConfig {
                     endpoints: cli.backends,
                     ..Default::default()
                 }
+            },
+            websocket: ws_server::WsConfig {
+                enabled: !cli.no_ws,
+                port: cli.ws_port,
+                ..Default::default()
             },
         }
     };
@@ -89,15 +117,43 @@ async fn main() -> eyre::Result<()> {
         "backend_endpoints: {:?}",
         sentry_config.backend.endpoints
     );
+    info!(
+        "websocket: enabled={}, port={}",
+        sentry_config.websocket.enabled, sentry_config.websocket.port
+    );
 
-    // Create the transaction forwarder
-    let forwarder = Arc::new(TxForwarder::new(sentry_config.backend));
+    // Create a shutdown token
+    let shutdown = CancellationToken::new();
+
+    // Spawn Ctrl+C handler
+    let shutdown_signal = shutdown.clone();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            info!("received Ctrl+C, initiating graceful shutdown...");
+            shutdown_signal.cancel();
+        }
+    });
+
+    // Start WebSocket server if enabled
+    let ws_broadcaster = if sentry_config.websocket.enabled {
+        Some(ws_server::start_ws_server(sentry_config.websocket).await?)
+    } else {
+        None
+    };
+
+    // Load or generate persistent node key
+    let key_path = cli.data_dir.join("node.key");
+    let secret_key = node_key::load_or_generate(Path::new(&key_path))?;
+
+    // Create the transaction forwarder (HTTP + WS)
+    let forwarder = Arc::new(TxForwarder::new(sentry_config.backend, ws_broadcaster));
 
     // Build network config from file config
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
-    // Start the sentry network (blocks until shutdown)
-    network::start_sentry_network(net_config, forwarder).await?;
+    // Start the sentry network (runs until shutdown)
+    network::start_sentry_network(net_config, forwarder, secret_key, shutdown).await?;
 
+    info!("sentry node shut down cleanly");
     Ok(())
 }

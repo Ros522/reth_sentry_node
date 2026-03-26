@@ -1,5 +1,7 @@
 //! Transaction forwarder - sends validated transactions to backend nodes.
 
+use crate::dedup::{DedupConfig, TxDedup};
+use crate::ws_server::{PendingTxNotification, WsBroadcaster};
 use alloy_primitives::B256;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,9 @@ pub struct BackendConfig {
     /// Channel buffer size for pending forwards.
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
+    /// Deduplication configuration.
+    #[serde(default)]
+    pub dedup: DedupConfig,
 }
 
 fn default_max_concurrent() -> usize {
@@ -43,6 +48,7 @@ impl Default for BackendConfig {
             endpoints: vec!["http://localhost:8545".to_string()],
             max_concurrent: default_max_concurrent(),
             buffer_size: default_buffer_size(),
+            dedup: DedupConfig::default(),
         }
     }
 }
@@ -70,19 +76,24 @@ struct JsonRpcError {
     message: String,
 }
 
-/// Transaction forwarder that sends raw transactions to backend nodes via eth_sendRawTransaction.
+/// Transaction forwarder that sends raw transactions to backend nodes via:
+/// - HTTP JSON-RPC (`eth_sendRawTransaction`) to configured endpoints
+/// - WebSocket broadcast to connected subscribers
 pub struct TxForwarder {
     tx_sender: mpsc::Sender<ForwardableTx>,
 }
 
 impl TxForwarder {
     /// Create a new forwarder and spawn the background forwarding loop.
-    pub fn new(config: BackendConfig) -> Self {
+    ///
+    /// If `ws_broadcaster` is provided, transactions will also be broadcast
+    /// to all connected WebSocket subscribers.
+    pub fn new(config: BackendConfig, ws_broadcaster: Option<WsBroadcaster>) -> Self {
         let (tx_sender, rx) = mpsc::channel(config.buffer_size);
         let forwarder = Self { tx_sender };
 
         // Spawn the forwarding task
-        tokio::spawn(Self::forwarding_loop(config, rx));
+        tokio::spawn(Self::forwarding_loop(config, rx, ws_broadcaster));
 
         forwarder
     }
@@ -95,10 +106,15 @@ impl TxForwarder {
     }
 
     /// Background loop that consumes transactions and forwards them.
-    async fn forwarding_loop(config: BackendConfig, mut rx: mpsc::Receiver<ForwardableTx>) {
+    async fn forwarding_loop(
+        config: BackendConfig,
+        mut rx: mpsc::Receiver<ForwardableTx>,
+        ws_broadcaster: Option<WsBroadcaster>,
+    ) {
         let client = Client::new();
         let endpoints: Arc<Vec<String>> = Arc::new(config.endpoints);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent));
+        let dedup = TxDedup::new(config.dedup);
         let mut id_counter: u64 = 0;
 
         info!(
@@ -107,6 +123,25 @@ impl TxForwarder {
         );
 
         while let Some(tx) = rx.recv().await {
+            // Deduplicate: skip if we've already seen this tx hash
+            if !dedup.check_and_insert(tx.hash) {
+                debug!(tx_hash = %tx.hash, "duplicate transaction skipped");
+                continue;
+            }
+
+            // Broadcast to WebSocket subscribers
+            if let Some(ref ws) = ws_broadcaster {
+                ws.broadcast(PendingTxNotification {
+                    hash: tx.hash,
+                    raw_tx: tx.raw_tx.clone(),
+                });
+            }
+
+            // Forward to HTTP RPC endpoints
+            if endpoints.is_empty() {
+                continue;
+            }
+
             let client = client.clone();
             let endpoints = endpoints.clone();
             let permit = semaphore.clone().acquire_owned().await;
