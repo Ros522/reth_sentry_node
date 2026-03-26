@@ -24,6 +24,7 @@ use forwarder::{BackendConfig, TxForwarder};
 use network::SentryNetworkConfig;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -121,6 +122,18 @@ async fn main() -> eyre::Result<()> {
         sentry_config.websocket.enabled, sentry_config.websocket.port
     );
 
+    // Create a shutdown token
+    let shutdown = CancellationToken::new();
+
+    // Spawn Ctrl+C handler
+    let shutdown_signal = shutdown.clone();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            info!("received Ctrl+C, initiating graceful shutdown...");
+            shutdown_signal.cancel();
+        }
+    });
+
     // Start WebSocket server if enabled
     let ws_broadcaster = if sentry_config.websocket.enabled {
         Some(ws_server::start_ws_server(sentry_config.websocket).await?)
@@ -138,8 +151,9 @@ async fn main() -> eyre::Result<()> {
     // Build network config from file config
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
-    // Start the sentry network (blocks until shutdown)
-    network::start_sentry_network(net_config, forwarder, secret_key).await?;
+    // Start the sentry network (runs until shutdown)
+    network::start_sentry_network(net_config, forwarder, secret_key, shutdown).await?;
 
+    info!("sentry node shut down cleanly");
     Ok(())
 }

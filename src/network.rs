@@ -26,6 +26,7 @@ use reth_transaction_pool::{
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 use crate::validator::{StatelessValidator, StatelessValidatorConfig};
@@ -62,10 +63,12 @@ pub type SentryTxPool =
 ///
 /// Caches NewBlock announcements from peers and uses them to respond
 /// to GetBlockHeaders/GetBlockBodies requests.
+/// Runs until the `shutdown` token is cancelled.
 pub async fn start_sentry_network(
     net_config: SentryNetworkConfig,
     forwarder: Arc<TxForwarder>,
     secret_key: SecretKey,
+    shutdown: CancellationToken,
 ) -> eyre::Result<()> {
     info!("starting sentry node on port {}", net_config.p2p_port);
 
@@ -137,69 +140,91 @@ pub async fn start_sentry_network(
 
     // Spawn a task to monitor peer connections
     let handle_clone = network_handle.clone();
+    let shutdown_monitor = shutdown.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
-            interval.tick().await;
-            let num_peers = handle_clone.num_connected_peers();
-            info!(num_peers, "peer count update");
+            tokio::select! {
+                _ = interval.tick() => {
+                    let num_peers = handle_clone.num_connected_peers();
+                    info!(num_peers, "peer count update");
+                }
+                _ = shutdown_monitor.cancelled() => break,
+            }
         }
     });
 
     // Spawn a task to listen for new transactions in the pool and forward them
     let pool_clone = tx_pool.clone();
+    let shutdown_tx = shutdown.clone();
     tokio::spawn(async move {
         let mut pending_txs = pool_clone.pending_transactions_listener();
         info!("listening for new pending transactions to forward");
 
-        while let Some(tx_hash) = pending_txs.recv().await {
-            debug!(%tx_hash, "new pending transaction detected");
+        loop {
+            tokio::select! {
+                Some(tx_hash) = pending_txs.recv() => {
+                    debug!(%tx_hash, "new pending transaction detected");
 
-            // Get the full transaction from the pool and encode it
-            if let Some(tx) = pool_clone.get(&tx_hash) {
-                let consensus_tx = tx.transaction.clone_into_consensus();
-                let mut raw_tx = Vec::new();
-                    alloy_rlp::Encodable::encode(consensus_tx.inner(), &mut raw_tx);
+                    if let Some(tx) = pool_clone.get(&tx_hash) {
+                        let consensus_tx = tx.transaction.clone_into_consensus();
+                        let mut raw_tx = Vec::new();
+                        alloy_rlp::Encodable::encode(consensus_tx.inner(), &mut raw_tx);
 
-                forwarder
-                    .forward(ForwardableTx {
-                        hash: tx_hash,
-                        raw_tx,
-                    })
-                    .await;
+                        forwarder
+                            .forward(ForwardableTx {
+                                hash: tx_hash,
+                                raw_tx,
+                            })
+                            .await;
+                    }
+                }
+                _ = shutdown_tx.cancelled() => break,
             }
         }
     });
 
-    // Main event loop - handle network events
-    while let Some(event) = events.next().await {
-        match event {
-            NetworkEvent::ActivePeerSession { info, .. } => {
-                info!(
-                    peer_id = %info.peer_id,
-                    remote_addr = %info.remote_addr,
-                    client_version = %info.client_version,
-                    "new peer connected"
-                );
+    // Main event loop - handle network events until shutdown
+    loop {
+        tokio::select! {
+            Some(event) = events.next() => {
+                match event {
+                    NetworkEvent::ActivePeerSession { info, .. } => {
+                        info!(
+                            peer_id = %info.peer_id,
+                            remote_addr = %info.remote_addr,
+                            client_version = %info.client_version,
+                            "new peer connected"
+                        );
+                    }
+                    NetworkEvent::Peer(peer_event) => match peer_event {
+                        PeerEvent::SessionClosed { peer_id, reason } => {
+                            debug!(
+                                %peer_id,
+                                ?reason,
+                                "peer disconnected"
+                            );
+                        }
+                        PeerEvent::PeerAdded(peer_id) => {
+                            debug!(%peer_id, "peer added to pool");
+                        }
+                        PeerEvent::PeerRemoved(peer_id) => {
+                            debug!(%peer_id, "peer removed from pool");
+                        }
+                        PeerEvent::SessionEstablished(_) => {}
+                    },
+                }
             }
-            NetworkEvent::Peer(peer_event) => match peer_event {
-                PeerEvent::SessionClosed { peer_id, reason } => {
-                    debug!(
-                        %peer_id,
-                        ?reason,
-                        "peer disconnected"
-                    );
-                }
-                PeerEvent::PeerAdded(peer_id) => {
-                    debug!(%peer_id, "peer added to pool");
-                }
-                PeerEvent::PeerRemoved(peer_id) => {
-                    debug!(%peer_id, "peer removed from pool");
-                }
-                PeerEvent::SessionEstablished(_) => {}
-            },
+            _ = shutdown.cancelled() => {
+                info!("shutdown signal received, stopping network");
+                break;
+            }
         }
     }
+
+    // Graceful shutdown: disconnect peers
+    network_handle.shutdown().await?;
+    info!("network stopped");
 
     Ok(())
 }
