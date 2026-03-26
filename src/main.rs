@@ -4,8 +4,11 @@
 //! performs stateless validation, and forwards valid transactions to
 //! configured backend nodes via HTTP RPC and/or WebSocket streaming.
 //!
-//! This node does NOT sync blocks - it only participates in transaction gossip.
+//! This node does NOT sync blocks - it caches NewBlock announcements from
+//! peers to serve block requests and maintain peer reputation.
 
+mod block_cache;
+mod block_import;
 mod config;
 mod dedup;
 mod eth_proxy;
@@ -54,11 +57,6 @@ struct Cli {
     /// Disable WebSocket server.
     #[arg(long, default_value_t = false)]
     no_ws: bool,
-
-    /// Backend node WebSocket URL for proxying ETH requests (e.g., ws://localhost:8546).
-    /// When set, block header/body requests from peers are proxied to this node.
-    #[arg(long)]
-    backend_ws: Option<String>,
 }
 
 #[tokio::main]
@@ -102,7 +100,6 @@ async fn main() -> eyre::Result<()> {
                 port: cli.ws_port,
                 ..Default::default()
             },
-            backend_ws: cli.backend_ws,
         }
     };
 
@@ -117,10 +114,6 @@ async fn main() -> eyre::Result<()> {
     info!(
         "websocket: enabled={}, port={}",
         sentry_config.websocket.enabled, sentry_config.websocket.port
-    );
-    info!(
-        "backend_ws: {:?}",
-        sentry_config.backend_ws.as_deref().unwrap_or("none (empty responses)")
     );
 
     // Start WebSocket server if enabled
@@ -137,7 +130,7 @@ async fn main() -> eyre::Result<()> {
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
     // Start the sentry network (blocks until shutdown)
-    network::start_sentry_network(net_config, forwarder, sentry_config.backend_ws).await?;
+    network::start_sentry_network(net_config, forwarder).await?;
 
     Ok(())
 }

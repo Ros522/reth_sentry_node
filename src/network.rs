@@ -4,9 +4,13 @@
 //! - Discv4 for peer discovery
 //! - RLPx for encrypted communication
 //! - eth protocol for transaction gossip
+//! - NewBlock caching for serving peer requests
 //!
-//! Block sync is explicitly disabled - we only participate in transaction gossip.
+//! Block sync is disabled - we cache NewBlock announcements and use them
+//! to respond to peer requests.
 
+use crate::block_cache::BlockCache;
+use crate::block_import::CachingBlockImport;
 use crate::eth_proxy;
 use crate::forwarder::{ForwardableTx, TxForwarder};
 use reth_chainspec::MAINNET;
@@ -56,12 +60,11 @@ pub type SentryTxPool =
 
 /// Start the sentry P2P network.
 ///
-/// If `backend_ws_url` is provided, ETH protocol requests (GetBlockHeaders etc.)
-/// will be proxied to the backend node to maintain peer reputation.
+/// Caches NewBlock announcements from peers and uses them to respond
+/// to GetBlockHeaders/GetBlockBodies requests.
 pub async fn start_sentry_network(
     net_config: SentryNetworkConfig,
     forwarder: Arc<TxForwarder>,
-    backend_ws_url: Option<String>,
 ) -> eyre::Result<()> {
     info!("starting sentry node on port {}", net_config.p2p_port);
 
@@ -83,6 +86,10 @@ pub async fn start_sentry_network(
 
     info!("transaction pool created");
 
+    // Create block cache and custom block import
+    let block_cache = BlockCache::new(256);
+    let block_import = CachingBlockImport::new(block_cache.clone());
+
     // Build network config using noop provider (no block sync)
     let peers_config = reth_network::PeersConfig::default()
         .with_max_outbound(net_config.max_peers as usize / 2)
@@ -92,6 +99,7 @@ pub async fn start_sentry_network(
         .listener_port(net_config.p2p_port)
         .discovery_port(net_config.discovery_port)
         .peer_config(peers_config)
+        .block_import(Box::new(block_import))
         .disable_dns_discovery()
         .mainnet_boot_nodes();
 
@@ -120,8 +128,8 @@ pub async fn start_sentry_network(
     tokio::spawn(network);
     tokio::spawn(transactions);
 
-    // Spawn ETH request proxy (uses backend WS if available, empty responses otherwise)
-    tokio::spawn(eth_proxy::start_eth_proxy(eth_req_rx, backend_ws_url));
+    // Spawn ETH request handler (uses block cache)
+    tokio::spawn(eth_proxy::start_eth_request_handler(eth_req_rx, block_cache));
 
     // Subscribe to network events
     let mut events = network_handle.event_listener();
