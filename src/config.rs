@@ -17,6 +17,10 @@ pub struct SentryConfig {
     /// WebSocket server configuration.
     #[serde(default)]
     pub websocket: WsConfig,
+    /// Backend node WebSocket URL for proxying ETH protocol requests.
+    /// When set, GetBlockHeaders/GetBlockBodies are proxied to this node.
+    #[serde(default)]
+    pub backend_ws: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +66,7 @@ impl Default for SentryConfig {
             network: NetworkConfigFile::default(),
             backend: BackendConfig::default(),
             websocket: WsConfig::default(),
+            backend_ws: None,
         }
     }
 }

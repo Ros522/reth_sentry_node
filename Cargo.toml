@@ -21,6 +21,10 @@ reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", ta
 alloy-primitives = "1.5"
 alloy-rlp = "0.3.13"
 alloy-consensus = "1.6"
+alloy-eips = "1.6"
+
+# Reth network P2P types
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.11.3" }
 
 # Async
 tokio = { version = "1", features = ["full"] }

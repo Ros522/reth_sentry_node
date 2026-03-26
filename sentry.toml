@@ -10,6 +10,11 @@ p2p_port = 30303
 # Discovery UDP port
 discovery_port = 30303
 
+# Backend node WebSocket URL for proxying ETH protocol requests
+# (GetBlockHeaders, GetBlockBodies) to maintain peer reputation.
+# When connected, peer requests are proxied; when not set, empty responses are returned.
+# backend_ws = "ws://localhost:8546"
+
 [backend]
 # Backend node RPC endpoints to forward validated transactions to
 # (via eth_sendRawTransaction). Leave empty if using WebSocket only.

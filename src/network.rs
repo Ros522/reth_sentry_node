@@ -7,6 +7,7 @@
 //!
 //! Block sync is explicitly disabled - we only participate in transaction gossip.
 
+use crate::eth_proxy;
 use crate::forwarder::{ForwardableTx, TxForwarder};
 use reth_chainspec::MAINNET;
 use reth_eth_wire::EthNetworkPrimitives;
@@ -19,6 +20,7 @@ use reth_transaction_pool::{
     PoolTransaction, TransactionPool,
 };
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, info};
 
@@ -53,9 +55,13 @@ pub type SentryTxPool =
     Pool<StatelessValidator, CoinbaseTipOrdering<EthPooledTransaction>, InMemoryBlobStore>;
 
 /// Start the sentry P2P network.
+///
+/// If `backend_ws_url` is provided, ETH protocol requests (GetBlockHeaders etc.)
+/// will be proxied to the backend node to maintain peer reputation.
 pub async fn start_sentry_network(
     net_config: SentryNetworkConfig,
     forwarder: Arc<TxForwarder>,
+    backend_ws_url: Option<String>,
 ) -> eyre::Result<()> {
     info!("starting sentry node on port {}", net_config.p2p_port);
 
@@ -91,13 +97,19 @@ pub async fn start_sentry_network(
 
     let network_config = net_builder.build_with_noop_provider(MAINNET.clone());
 
-    // Build the network - use split_with_handle to get components
-    let builder = NetworkManager::builder(network_config)
-        .await?
+    // Build the network
+    let mut network = NetworkManager::new(network_config).await?;
+
+    // Wire up the ETH request handler channel
+    let (eth_req_tx, eth_req_rx) = mpsc::channel(256);
+    network.set_eth_request_handler(eth_req_tx);
+
+    // Build with transactions manager
+    let builder = network
+        .into_builder()
         .transactions(tx_pool.clone(), Default::default());
 
-    let (network_handle, network, transactions, _request_handler) =
-        builder.split_with_handle();
+    let (network_handle, network, transactions, _) = builder.split_with_handle();
 
     info!(
         peer_id = %network_handle.peer_id(),
@@ -107,6 +119,9 @@ pub async fn start_sentry_network(
     // Spawn network manager and transaction manager as background tasks
     tokio::spawn(network);
     tokio::spawn(transactions);
+
+    // Spawn ETH request proxy (uses backend WS if available, empty responses otherwise)
+    tokio::spawn(eth_proxy::start_eth_proxy(eth_req_rx, backend_ws_url));
 
     // Subscribe to network events
     let mut events = network_handle.event_listener();
