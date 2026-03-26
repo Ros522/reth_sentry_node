@@ -1,0 +1,16 @@
+services:
+  sentry:
+    build: .
+    ports:
+      - "30303:30303/tcp"
+      - "30303:30303/udp"
+      - "8546:8546/tcp"
+    volumes:
+      - sentry-data:/data
+      - ./sentry.toml:/etc/sentry-node/sentry.toml:ro
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info,reth_sentry_node=debug
+
+volumes:
+  sentry-data:
