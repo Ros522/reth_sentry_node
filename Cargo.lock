@@ -4811,6 +4811,7 @@ dependencies = [
  "reth-discv4",
  "reth-dns-discovery",
  "reth-eth-wire",
+ "reth-ethereum-forks",
  "reth-ethereum-primitives",
  "reth-network",
  "reth-network-api",
