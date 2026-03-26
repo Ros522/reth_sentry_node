@@ -42,5 +42,9 @@ clap = { version = "4", features = ["derive"] }
 # HTTP client for forwarding
 reqwest = { version = "0.12", features = ["json"] }
 
+# WebSocket server for pending tx streaming
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+
 # Misc
 eyre = "0.6"

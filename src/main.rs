@@ -2,7 +2,7 @@
 //!
 //! Connects to the Ethereum P2P network to collect mempool transactions,
 //! performs stateless validation, and forwards valid transactions to
-//! configured backend nodes.
+//! configured backend nodes via HTTP RPC and/or WebSocket streaming.
 //!
 //! This node does NOT sync blocks - it only participates in transaction gossip.
 
@@ -10,6 +10,7 @@ mod config;
 mod forwarder;
 mod network;
 mod validator;
+mod ws_server;
 
 use clap::Parser;
 use config::SentryConfig;
@@ -43,6 +44,14 @@ struct Cli {
     /// Backend RPC endpoints to forward transactions to (comma-separated).
     #[arg(long, value_delimiter = ',')]
     backends: Vec<String>,
+
+    /// WebSocket server port for pending tx streaming.
+    #[arg(long, default_value_t = 8546)]
+    ws_port: u16,
+
+    /// Disable WebSocket server.
+    #[arg(long, default_value_t = false)]
+    no_ws: bool,
 }
 
 #[tokio::main]
@@ -71,12 +80,20 @@ async fn main() -> eyre::Result<()> {
                 ..Default::default()
             },
             backend: if cli.backends.is_empty() {
-                BackendConfig::default()
+                BackendConfig {
+                    endpoints: vec![],
+                    ..Default::default()
+                }
             } else {
                 BackendConfig {
                     endpoints: cli.backends,
                     ..Default::default()
                 }
+            },
+            websocket: ws_server::WsConfig {
+                enabled: !cli.no_ws,
+                port: cli.ws_port,
+                ..Default::default()
             },
         }
     };
@@ -89,9 +106,20 @@ async fn main() -> eyre::Result<()> {
         "backend_endpoints: {:?}",
         sentry_config.backend.endpoints
     );
+    info!(
+        "websocket: enabled={}, port={}",
+        sentry_config.websocket.enabled, sentry_config.websocket.port
+    );
 
-    // Create the transaction forwarder
-    let forwarder = Arc::new(TxForwarder::new(sentry_config.backend));
+    // Start WebSocket server if enabled
+    let ws_broadcaster = if sentry_config.websocket.enabled {
+        Some(ws_server::start_ws_server(sentry_config.websocket).await?)
+    } else {
+        None
+    };
+
+    // Create the transaction forwarder (HTTP + WS)
+    let forwarder = Arc::new(TxForwarder::new(sentry_config.backend, ws_broadcaster));
 
     // Build network config from file config
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
