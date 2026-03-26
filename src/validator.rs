@@ -8,6 +8,7 @@
 //! - Nonce is not u64::MAX
 //! - Value + gas cost doesn't overflow U256
 //! - Signer is not zero address
+//! - Reject contract creation transactions (to == None)
 
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, U256};
@@ -65,6 +66,11 @@ impl StatelessValidator {
         tx: &T,
     ) -> Result<(), String> {
         let signer = tx.sender();
+
+        // 0. Reject contract creation transactions
+        if tx.is_create() {
+            return Err("contract creation transactions are not allowed".to_string());
+        }
 
         // 1. Chain ID check
         if let Some(tx_chain_id) = tx.chain_id() {
