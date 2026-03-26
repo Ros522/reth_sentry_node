@@ -33,6 +33,13 @@ pub struct NetworkConfigFile {
     /// Discovery (UDP) port.
     #[serde(default = "default_port")]
     pub discovery_port: u16,
+    /// Number of recent blocks to cache for peer requests.
+    #[serde(default = "default_block_cache_size")]
+    pub block_cache_size: usize,
+}
+
+fn default_block_cache_size() -> usize {
+    256
 }
 
 fn default_chain_id() -> u64 {
@@ -52,6 +59,7 @@ impl Default for NetworkConfigFile {
             max_peers: default_max_peers(),
             p2p_port: default_port(),
             discovery_port: default_port(),
+            block_cache_size: default_block_cache_size(),
         }
     }
 }
@@ -73,6 +81,7 @@ impl From<&NetworkConfigFile> for SentryNetworkConfig {
             max_peers: cfg.max_peers,
             p2p_port: cfg.p2p_port,
             discovery_port: cfg.discovery_port,
+            block_cache_size: cfg.block_cache_size,
         }
     }
 }

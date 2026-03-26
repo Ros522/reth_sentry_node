@@ -9,6 +9,8 @@ max_peers = 50
 p2p_port = 30303
 # Discovery UDP port
 discovery_port = 30303
+# Number of recent blocks to cache for peer requests (persisted to disk)
+block_cache_size = 256
 
 [backend]
 # Backend node RPC endpoints to forward validated transactions to

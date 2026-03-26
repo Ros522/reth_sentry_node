@@ -43,6 +43,8 @@ pub struct SentryNetworkConfig {
     pub p2p_port: u16,
     /// Port for discovery (UDP).
     pub discovery_port: u16,
+    /// Number of recent blocks to cache.
+    pub block_cache_size: usize,
 }
 
 impl Default for SentryNetworkConfig {
@@ -52,6 +54,7 @@ impl Default for SentryNetworkConfig {
             max_peers: 50,
             p2p_port: 30303,
             discovery_port: 30303,
+            block_cache_size: 256,
         }
     }
 }
@@ -93,7 +96,7 @@ pub async fn start_sentry_network(
     info!("transaction pool created");
 
     // Create block cache and restore from disk if available
-    let block_cache = BlockCache::new(256);
+    let block_cache = BlockCache::new(net_config.block_cache_size);
     let cache_path = data_dir.join("block_cache.bin");
     if let Err(e) = block_cache.load_from_file(&cache_path) {
         warn!("failed to load block cache: {}", e);
