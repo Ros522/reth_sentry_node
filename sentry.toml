@@ -19,6 +19,12 @@ max_concurrent = 64
 # Buffer size for pending transaction forwards
 buffer_size = 4096
 
+[backend.dedup]
+# LRU cache size for tx hash deduplication
+cache_size = 100000
+# Log dedup statistics every N transactions
+log_interval = 1000
+
 [websocket]
 # Enable WebSocket server for pending tx streaming
 enabled = true

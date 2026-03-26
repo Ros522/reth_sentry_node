@@ -1,5 +1,6 @@
 //! Transaction forwarder - sends validated transactions to backend nodes.
 
+use crate::dedup::{DedupConfig, TxDedup};
 use crate::ws_server::{PendingTxNotification, WsBroadcaster};
 use alloy_primitives::B256;
 use reqwest::Client;
@@ -28,6 +29,9 @@ pub struct BackendConfig {
     /// Channel buffer size for pending forwards.
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
+    /// Deduplication configuration.
+    #[serde(default)]
+    pub dedup: DedupConfig,
 }
 
 fn default_max_concurrent() -> usize {
@@ -44,6 +48,7 @@ impl Default for BackendConfig {
             endpoints: vec!["http://localhost:8545".to_string()],
             max_concurrent: default_max_concurrent(),
             buffer_size: default_buffer_size(),
+            dedup: DedupConfig::default(),
         }
     }
 }
@@ -109,6 +114,7 @@ impl TxForwarder {
         let client = Client::new();
         let endpoints: Arc<Vec<String>> = Arc::new(config.endpoints);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent));
+        let dedup = TxDedup::new(config.dedup);
         let mut id_counter: u64 = 0;
 
         info!(
@@ -117,6 +123,12 @@ impl TxForwarder {
         );
 
         while let Some(tx) = rx.recv().await {
+            // Deduplicate: skip if we've already seen this tx hash
+            if !dedup.check_and_insert(tx.hash) {
+                debug!(tx_hash = %tx.hash, "duplicate transaction skipped");
+                continue;
+            }
+
             // Broadcast to WebSocket subscribers
             if let Some(ref ws) = ws_broadcaster {
                 ws.broadcast(PendingTxNotification {

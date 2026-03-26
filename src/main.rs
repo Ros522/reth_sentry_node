@@ -7,6 +7,7 @@
 //! This node does NOT sync blocks - it only participates in transaction gossip.
 
 mod config;
+mod dedup;
 mod forwarder;
 mod network;
 mod validator;
