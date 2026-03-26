@@ -1,7 +1,14 @@
 FROM rust:1.87-bookworm AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    clang \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
-COPY Cargo.toml Cargo.lock* ./
+COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 
 RUN cargo build --release
