@@ -60,9 +60,13 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     no_ws: bool,
 
-    /// Data directory for persisting node key.
+    /// Data directory for persisting node key and block cache.
     #[arg(long, default_value = "data")]
     data_dir: PathBuf,
+
+    /// Number of recent blocks to cache for peer requests.
+    #[arg(long, default_value_t = 256)]
+    block_cache_size: usize,
 }
 
 #[tokio::main]
@@ -88,7 +92,7 @@ async fn main() -> eyre::Result<()> {
                 max_peers: cli.max_peers,
                 p2p_port: cli.port,
                 discovery_port: cli.port,
-                ..Default::default()
+                block_cache_size: cli.block_cache_size,
             },
             backend: if cli.backends.is_empty() {
                 BackendConfig {
@@ -152,7 +156,7 @@ async fn main() -> eyre::Result<()> {
     let net_config = SentryNetworkConfig::from(&sentry_config.network);
 
     // Start the sentry network (runs until shutdown)
-    network::start_sentry_network(net_config, forwarder, secret_key, shutdown).await?;
+    network::start_sentry_network(net_config, forwarder, secret_key, shutdown, cli.data_dir).await?;
 
     info!("sentry node shut down cleanly");
     Ok(())

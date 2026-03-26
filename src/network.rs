@@ -23,11 +23,12 @@ use reth_transaction_pool::{
     blobstore::InMemoryBlobStore, CoinbaseTipOrdering, EthPooledTransaction, Pool,
     PoolTransaction, TransactionPool,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::validator::{StatelessValidator, StatelessValidatorConfig};
 
@@ -42,6 +43,8 @@ pub struct SentryNetworkConfig {
     pub p2p_port: u16,
     /// Port for discovery (UDP).
     pub discovery_port: u16,
+    /// Number of recent blocks to cache.
+    pub block_cache_size: usize,
 }
 
 impl Default for SentryNetworkConfig {
@@ -51,6 +54,7 @@ impl Default for SentryNetworkConfig {
             max_peers: 50,
             p2p_port: 30303,
             discovery_port: 30303,
+            block_cache_size: 256,
         }
     }
 }
@@ -69,6 +73,7 @@ pub async fn start_sentry_network(
     forwarder: Arc<TxForwarder>,
     secret_key: SecretKey,
     shutdown: CancellationToken,
+    data_dir: PathBuf,
 ) -> eyre::Result<()> {
     info!("starting sentry node on port {}", net_config.p2p_port);
 
@@ -90,8 +95,12 @@ pub async fn start_sentry_network(
 
     info!("transaction pool created");
 
-    // Create block cache and custom block import
-    let block_cache = BlockCache::new(256);
+    // Create block cache and restore from disk if available
+    let block_cache = BlockCache::new(net_config.block_cache_size);
+    let cache_path = data_dir.join("block_cache.bin");
+    if let Err(e) = block_cache.load_from_file(&cache_path) {
+        warn!("failed to load block cache: {}", e);
+    }
     let block_import = CachingBlockImport::new(block_cache.clone());
 
     // Build network config using noop provider (no block sync)
@@ -133,7 +142,7 @@ pub async fn start_sentry_network(
     tokio::spawn(transactions);
 
     // Spawn ETH request handler (uses block cache)
-    tokio::spawn(eth_proxy::start_eth_request_handler(eth_req_rx, block_cache));
+    tokio::spawn(eth_proxy::start_eth_request_handler(eth_req_rx, block_cache.clone()));
 
     // Subscribe to network events
     let mut events = network_handle.event_listener();
@@ -222,7 +231,10 @@ pub async fn start_sentry_network(
         }
     }
 
-    // Graceful shutdown: disconnect peers
+    // Graceful shutdown: save block cache, then disconnect peers
+    if let Err(e) = block_cache.save_to_file(&cache_path) {
+        warn!("failed to save block cache: {}", e);
+    }
     network_handle.shutdown().await?;
     info!("network stopped");
 
