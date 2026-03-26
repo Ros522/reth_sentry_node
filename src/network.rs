@@ -4,10 +4,7 @@
 //! - Discv4 for peer discovery
 //! - RLPx for encrypted communication
 //! - eth protocol for transaction gossip
-//! - NewBlock caching for serving peer requests
-//!
-//! Block sync is disabled - we cache NewBlock announcements and use them
-//! to respond to peer requests.
+//! - NewBlock caching and rebroadcast for peer block serving
 
 use crate::block_cache::BlockCache;
 use crate::block_import::CachingBlockImport;
@@ -15,9 +12,10 @@ use crate::eth_proxy;
 use crate::forwarder::{ForwardableTx, TxForwarder};
 use reth_chainspec::MAINNET;
 use reth_eth_wire::EthNetworkPrimitives;
-use reth_network::{config::SecretKey, NetworkConfigBuilder, NetworkManager};
+use reth_network::message::{NewBlockMessage, PeerMessage};
+use reth_network::{config::SecretKey, NetworkConfigBuilder, NetworkManager, NetworkHandle};
 use reth_network_api::{
-    events::PeerEvent, NetworkEvent, NetworkEventListenerProvider, PeersInfo,
+    events::PeerEvent, NetworkEvent, NetworkEventListenerProvider, Peers, PeersInfo,
 };
 use reth_transaction_pool::{
     blobstore::InMemoryBlobStore, CoinbaseTipOrdering, EthPooledTransaction, Pool,
@@ -65,8 +63,8 @@ pub type SentryTxPool =
 
 /// Start the sentry P2P network.
 ///
-/// Caches NewBlock announcements from peers and uses them to respond
-/// to GetBlockHeaders/GetBlockBodies requests.
+/// Caches NewBlock announcements from peers, rebroadcasts them to all
+/// connected peers, and responds to GetBlockHeaders/GetBlockBodies.
 /// Runs until the `shutdown` token is cancelled.
 pub async fn start_sentry_network(
     net_config: SentryNetworkConfig,
@@ -101,7 +99,10 @@ pub async fn start_sentry_network(
     if let Err(e) = block_cache.load_from_file(&cache_path) {
         warn!("failed to load block cache: {}", e);
     }
-    let block_import = CachingBlockImport::new(block_cache.clone());
+
+    // Create rebroadcast channel and block import
+    let (rebroadcast_tx, rebroadcast_rx) = mpsc::unbounded_channel();
+    let block_import = CachingBlockImport::new(block_cache.clone(), rebroadcast_tx);
 
     // Build network config using noop provider (no block sync)
     let peers_config = reth_network::PeersConfig::default()
@@ -143,6 +144,15 @@ pub async fn start_sentry_network(
 
     // Spawn ETH request handler (uses block cache)
     tokio::spawn(eth_proxy::start_eth_request_handler(eth_req_rx, block_cache.clone()));
+
+    // Spawn NewBlock rebroadcast task
+    let rebroadcast_handle = network_handle.clone();
+    let shutdown_rebroadcast = shutdown.clone();
+    tokio::spawn(rebroadcast_new_blocks(
+        rebroadcast_rx,
+        rebroadcast_handle,
+        shutdown_rebroadcast,
+    ));
 
     // Subscribe to network events
     let mut events = network_handle.event_listener();
@@ -239,4 +249,51 @@ pub async fn start_sentry_network(
     info!("network stopped");
 
     Ok(())
+}
+
+/// Rebroadcast received NewBlock messages to all connected peers.
+///
+/// This allows backend nodes connected to this sentry to follow the chain tip.
+async fn rebroadcast_new_blocks(
+    mut rx: mpsc::UnboundedReceiver<crate::block_import::NewBlockData>,
+    handle: NetworkHandle<EthNetworkPrimitives>,
+    shutdown: CancellationToken,
+) {
+    info!("NewBlock rebroadcast task started");
+
+    loop {
+        tokio::select! {
+            Some(new_block) = rx.recv() => {
+                let block_number = new_block.block.block.header.number;
+
+                // Get all connected peers and send the NewBlock to each
+                let peers = match handle.get_all_peers().await {
+                    Ok(peers) => peers,
+                    Err(e) => {
+                        warn!(error = %e, "failed to get peer list for rebroadcast");
+                        continue;
+                    }
+                };
+
+                let peer_count = peers.len();
+                for peer in peers {
+                    let msg = PeerMessage::NewBlock(NewBlockMessage {
+                        hash: new_block.hash,
+                        block: new_block.block.clone(),
+                    });
+                    handle.send_eth_message(peer.remote_id, msg);
+                }
+
+                debug!(
+                    block_number,
+                    hash = %new_block.hash,
+                    peer_count,
+                    "rebroadcast NewBlock to peers"
+                );
+            }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+
+    info!("NewBlock rebroadcast task stopped");
 }
