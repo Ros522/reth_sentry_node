@@ -9,7 +9,7 @@ use alloy_eips::BlockHashOrNumber;
 use reth_eth_wire::{BlockBodies, BlockHeaders, EthNetworkPrimitives, GetBlockHeaders};
 use reth_network::eth_requests::IncomingEthRequest;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 /// Start the ETH request handler.
 ///
@@ -26,12 +26,22 @@ pub async fn start_eth_request_handler(
                 request,
                 response,
             } => {
+                let requested = format!("{:?} limit={}", request.start_block, request.limit);
                 let headers = resolve_headers(&cache, &request);
-                debug!(
-                    %peer_id,
-                    count = headers.len(),
-                    "responding to GetBlockHeaders"
-                );
+                if headers.is_empty() {
+                    warn!(
+                        %peer_id,
+                        request = %requested,
+                        "GetBlockHeaders: CACHE MISS (returning empty)"
+                    );
+                } else {
+                    info!(
+                        %peer_id,
+                        request = %requested,
+                        count = headers.len(),
+                        "GetBlockHeaders: responding from cache"
+                    );
+                }
                 let _ = response.send(Ok(BlockHeaders(headers)));
             }
             IncomingEthRequest::GetBlockBodies {
@@ -39,22 +49,43 @@ pub async fn start_eth_request_handler(
                 request,
                 response,
             } => {
+                let requested_count = request.0.len();
                 let bodies = resolve_bodies(&cache, &request.0);
-                debug!(
-                    %peer_id,
-                    count = bodies.len(),
-                    "responding to GetBlockBodies"
-                );
+                if bodies.len() < requested_count {
+                    warn!(
+                        %peer_id,
+                        requested = requested_count,
+                        found = bodies.len(),
+                        "GetBlockBodies: partial or empty (cache miss)"
+                    );
+                } else {
+                    debug!(
+                        %peer_id,
+                        count = bodies.len(),
+                        "GetBlockBodies: responding from cache"
+                    );
+                }
                 let _ = response.send(Ok(BlockBodies(bodies)));
             }
-            IncomingEthRequest::GetNodeData { .. } => {}
-            IncomingEthRequest::GetReceipts { response, .. } => {
+            IncomingEthRequest::GetNodeData { .. } => {
+                debug!("GetNodeData request (ignored, deprecated)");
+            }
+            IncomingEthRequest::GetReceipts {
+                peer_id, response, ..
+            } => {
+                debug!(%peer_id, "GetReceipts: returning empty");
                 let _ = response.send(Ok(Default::default()));
             }
-            IncomingEthRequest::GetReceipts69 { response, .. } => {
+            IncomingEthRequest::GetReceipts69 {
+                peer_id, response, ..
+            } => {
+                debug!(%peer_id, "GetReceipts69: returning empty");
                 let _ = response.send(Ok(reth_eth_wire::Receipts69(vec![])));
             }
-            IncomingEthRequest::GetReceipts70 { response, .. } => {
+            IncomingEthRequest::GetReceipts70 {
+                peer_id, response, ..
+            } => {
+                debug!(%peer_id, "GetReceipts70: returning empty");
                 let _ = response.send(Ok(reth_eth_wire::Receipts70 {
                     last_block_incomplete: false,
                     receipts: vec![],

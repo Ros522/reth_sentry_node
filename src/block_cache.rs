@@ -73,7 +73,7 @@ impl BlockCache {
         inner.headers_by_number.push(number, header);
         inner.hash_by_number.push(number, hash);
         inner.bodies_by_hash.push(hash, body);
-        debug!(block_number = number, %hash, "cached block from NewBlock");
+        info!(block_number = number, %hash, "cached block from NewBlock");
     }
 
     /// Get a header by block hash.
