@@ -76,6 +76,21 @@ impl BlockCache {
         info!(block_number = number, %hash, "cached block from NewBlock");
     }
 
+    /// Insert just a header (from proxy response).
+    pub fn insert_header(&self, hash: B256, header: Header) {
+        let mut inner = self.inner.lock().unwrap();
+        let number = header.number;
+        inner.headers_by_hash.push(hash, header.clone());
+        inner.headers_by_number.push(number, header);
+        inner.hash_by_number.push(number, hash);
+    }
+
+    /// Insert just a body (from proxy response).
+    pub fn insert_body(&self, hash: B256, body: BlockBody) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.bodies_by_hash.push(hash, body);
+    }
+
     /// Get a header by block hash.
     pub fn get_header_by_hash(&self, hash: &B256) -> Option<Header> {
         self.inner.lock().unwrap().headers_by_hash.get(hash).cloned()

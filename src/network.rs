@@ -17,7 +17,8 @@ use reth_ethereum_forks::Head;
 use reth_network::message::{NewBlockMessage, PeerMessage};
 use reth_network::{config::SecretKey, NetworkConfigBuilder, NetworkManager, NetworkHandle};
 use reth_network_api::{
-    events::PeerEvent, NetworkEvent, NetworkEventListenerProvider, Peers, PeersInfo,
+    events::PeerEvent, BlockDownloaderProvider, NetworkEvent, NetworkEventListenerProvider,
+    Peers, PeersInfo,
 };
 use reth_transaction_pool::{
     blobstore::InMemoryBlobStore, CoinbaseTipOrdering, EthPooledTransaction, Pool,
@@ -181,8 +182,15 @@ pub async fn start_sentry_network(
     tokio::spawn(network);
     tokio::spawn(transactions);
 
-    // Spawn ETH request handler (uses block cache)
-    tokio::spawn(eth_proxy::start_eth_request_handler(eth_req_rx, block_cache.clone()));
+    // Get FetchClient for proxying block requests to internet peers
+    let fetch_client = network_handle.fetch_client().await?;
+
+    // Spawn ETH request handler (cache + proxy fallback)
+    tokio::spawn(eth_proxy::start_eth_request_handler(
+        eth_req_rx,
+        block_cache.clone(),
+        fetch_client,
+    ));
 
     // Spawn NewBlock rebroadcast task
     let rebroadcast_handle = network_handle.clone();
