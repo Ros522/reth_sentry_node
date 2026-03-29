@@ -10,6 +10,7 @@ use crate::block_cache::BlockCache;
 use crate::block_import::CachingBlockImport;
 use crate::eth_proxy;
 use crate::forwarder::{ForwardableTx, TxForwarder};
+use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
 use reth_chainspec::MAINNET;
 use reth_eth_wire::EthNetworkPrimitives;
@@ -234,8 +235,7 @@ pub async fn start_sentry_network(
 
                     if let Some(tx) = pool_clone.get(&tx_hash) {
                         let consensus_tx = tx.transaction.clone_into_consensus();
-                        let mut raw_tx = Vec::new();
-                        alloy_rlp::Encodable::encode(consensus_tx.inner(), &mut raw_tx);
+                        let raw_tx = consensus_tx.inner().encoded_2718();
 
                         forwarder
                             .forward(ForwardableTx {
