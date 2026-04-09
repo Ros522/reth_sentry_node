@@ -17,6 +17,7 @@ use reth_eth_wire::EthNetworkPrimitives;
 use reth_ethereum_forks::Head;
 use reth_network::message::{NewBlockMessage, PeerMessage};
 use reth_network::{config::SecretKey, NetworkConfigBuilder, NetworkManager, NetworkHandle};
+use reth_tasks::Runtime;
 use reth_network_api::{
     events::PeerEvent, BlockDownloaderProvider, NetworkEvent, NetworkEventListenerProvider,
     Peers, PeersInfo,
@@ -149,7 +150,12 @@ pub async fn start_sentry_network(
         }
     };
 
-    let net_builder = NetworkConfigBuilder::<EthNetworkPrimitives>::new(secret_key)
+    // Create runtime from existing tokio handle
+    let runtime = reth_tasks::RuntimeBuilder::new(reth_tasks::RuntimeConfig::default()
+        .with_tokio(reth_tasks::runtime::TokioConfig::existing_handle(tokio::runtime::Handle::current())))
+        .build()?;
+
+    let net_builder = NetworkConfigBuilder::<EthNetworkPrimitives>::new(secret_key, runtime)
         .listener_port(net_config.p2p_port)
         .discovery_port(net_config.discovery_port)
         .peer_config(peers_config)

@@ -188,6 +188,11 @@ pub async fn start_eth_request_handler(
                     receipts: vec![],
                 }));
             }
+            IncomingEthRequest::GetBlockAccessLists {
+                response, ..
+            } => {
+                let _ = response.send(Ok(Default::default()));
+            }
         }
     }
 }
